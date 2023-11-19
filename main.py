@@ -14,22 +14,33 @@ from langchain.chains import LLMChain
 import traceback
 from langchain.prompts import ChatPromptTemplate
 
+
 app = FastAPI()
 
 class SearchRequest(BaseModel):
     description: str
 
 async def refine_prompt(llm, input):
-    return "Sorry, no keywords match!"
-    #keywords = "ATV Riding, Aquarium, Backcountry, Backpacking, Beaches, Biking, Boardwalk, Boating,Brewery,Camping,Canoeing,Caves,Cliffs,Colorful Rocks,Conservatory, Detroit, Disc Golf, Dunes, Fall Colors,Fishing,Forest,Fort,Fountain,Gardens,Ghost Town,Golf Course,Grand Hotel,Hiking,Hiking Trails,Historic Site,Historic Sites,Kayaking,Lake, Lake Michigan,Lake Superior,Lakefront,Lakes,Lighthouse,Logging Museum,Military Fort,Musical Fountain,Nature Trails,Picnic,Pier,Remote,River,Riverfront,Rock Formations,Sand Dunes, Scenic Overlooks,Skiing,Sunsets,Trails,Waterfalls,Wilderness,Wildlife,Wildlife Sanctuary,Winter Sports"
-    #user_prompt = "You are an AI assistant whose goal is rewrite the user's text into one concise sentence and logically replace the words in the text with one or two of the following keywords: " + keywords + " User Input:" +  input
-    #result = llm(user_prompt)
-    #return result
+    keywords = "ATV Riding, Aquarium, Backcountry, Backpacking, Beaches, Biking, Boardwalk, Boating,Brewery,Camping,Canoeing,Caves,Cliffs,Colorful Rocks,Conservatory, Detroit, Disc Golf, Dunes, Fall Colors,Fishing,Forest,Fort,Fountain,Gardens,Ghost Town,Golf Course,Grand Hotel,Hiking,Hiking Trails,Historic Site,Historic Sites,Kayaking,Lake, Lake Michigan,Lake Superior,Lakefront,Lakes,Lighthouse,Logging Museum,Military Fort,Musical Fountain,Nature Trails,Picnic,Pier,Remote,River,Riverfront,Rock Formations,Sand Dunes, Scenic Overlooks,Skiing,Sunsets,Trails,Waterfalls,Wilderness,Wildlife,Wildlife Sanctuary,Winter Sports"
+    template2 = f"""You are AI Agent interested in Michigan Parks. Given a description of a park, it is your job to match these descriptions with a list of keywords. You will accomplish this task by reading the user's text and relating them to one or more keywords that is most similar to their request. Then, you will rewrite the user's text in a concise single sentence using the keywords that were most similar.  The possible keywords you are required to use are {keywords}
+    Example User Prompt: I want to go to go somewhere where I can sail the sea!
+    Example AI Rewritten Response: I intend to visit a park where I can engage in boating!
+    Goal: Using the logic demonstrated, please rewrite {input} 
+    """
+    authorPrompt =  PromptTemplate(
+    template=template2,
+    input_variables=['ok']
+    )
+
+    result = LLMChain(llm=llm, prompt=authorPrompt, verbose=True)
+    return result
 
 
 async def execute_cleaned_query(db_path, query):
     # Initialize the cleaned query
     cleaned_query = query
+
+    cleaned_query = query.strip('"')
 
     # Remove "SQLQuery:" and any preceding text, as many times as it occurs
     while "SQLQuery:" in cleaned_query:
@@ -59,48 +70,62 @@ def set_api_key():
  pass
    
 
-@app.post("/search/")
+@app.post("/search/", response_class=JSONResponse)
 async def search_restaurants(request: SearchRequest):
+  keywords = "ATV Riding, Aquarium, Backcountry, Backpacking, Beaches, Biking, Boardwalk, Boating,Brewery,Camping,Canoeing,Caves,Cliffs,Colorful Rocks,Conservatory, Detroit, Disc Golf, Dunes, Fall Colors,Fishing,Forest,Fort,Fountain,Gardens,Ghost Town,Golf Course,Grand Hotel,Hiking,Hiking Trails,Historic Site,Historic Sites,Kayaking,Lake, Lake Michigan,Lake Superior,Lakefront,Lakes,Lighthouse,Logging Museum,Military Fort,Musical Fountain,Nature Trails,Picnic,Pier,Remote,River,Riverfront,Rock Formations,Sand Dunes, Scenic Overlooks,Skiing,Sunsets,Trails,Waterfalls,Wilderness,Wildlife,Wildlife Sanctuary,Winter Sports"
+  print("entered")
   os.environ["OPENAI_API_KEY"] = pykey.getKey()
   description = request.description
   llm = OpenAI(temperature=0, model_name='gpt-4-1106-preview')
   # Explain to the AI agent its purpose and how it should read the table
-  keywords = "ATV Riding, Aquarium, Backcountry, Backpacking, Beaches, Biking, Boardwalk, Boating,Brewery,Camping,Canoeing,Caves,Cliffs,Colorful Rocks,Conservatory, Detroit, Disc Golf, Dunes, Fall Colors,Fishing,Forest,Fort,Fountain,Gardens,Ghost Town,Golf Course,Grand Hotel,Hiking,Hiking Trails,Historic Site,Historic Sites,Kayaking,Lake, Lake Michigan,Lake Superior,Lakefront,Lakes,Lighthouse,Logging Museum,Military Fort,Musical Fountain,Nature Trails,Picnic,Pier,Remote,River,Riverfront,Rock Formations,Sand Dunes, Scenic Overlooks,Skiing,Sunsets,Trails,Waterfalls,Wilderness,Wildlife,Wildlife Sanctuary,Winter Sports"
-  priming_text = "You are an AI assistant that understands and interprets descriptions of parks. Your job is to match these descriptions with a list of parks in a database. The database has a table named 'parks' with columns 'latitude', 'longitude', 'Elevation, and 'Keywords'. The 'Keywords' column contains descriptive keywords about each restaurant. Use the keywords from a description to find and recommend parks from the database that best match the description. " + " Return as many entire as you can. " + " The possible keywords are " + keywords
-  
+  template = f"""You are an SQlite3 AI Agent that queries a database that contains information about parks in Michigan. Given a description of a park, it is your job to match these descriptions with a list of parks in the database and create the appropriate SQL command. You will accomplish this task by reading the user's text and relating them to one or more keywords in the database that is most similar to their request even in scenarios where a keyword isn't specifically mentioned in the original text. The database has a table named 'parks' with columns 'Latitude', 'Longitude', 'Elevation, and 'Keywords'. The 'Keywords' column contains descriptive keywords about each restaurant. Return as many recommendations as possible. The possible keywords you may use are {keywords}
+  Example User Prompt: I want to go to go somewhere where I can sail the sea!
+  Example AI Rewritten Response: "SELECT * FROM parks WHERE Keywords LIKE '%Boating%'"
+  Goal: Using the logic demonstrated, please rewrite {description} 
+  """
+  SQLprompt = PromptTemplate(
+  template=template,
+  input_variables=['ok'],
+  )
+    
   try:
         # Create the database connection from the URI
         db = SQLDatabase.from_uri("sqlite:///parksDatabase.db")
 
         # Create the SQLDatabaseChain with the LLM and the database
-        db_chain = SQLDatabaseChain.from_llm(llm,db, top_k=1000, return_sql = True, verbose = True)
+        db_chain = SQLDatabaseChain.from_llm(llm,db, prompt=SQLprompt, top_k=1000, return_sql = True, verbose = True)
 
         # Run the chain to answer a question
-        answer = db_chain.run(priming_text + " Goal:" + description)
+        answer = db_chain.run(description)
         result = await execute_cleaned_query("parksDatabase.db",answer)
 
         if not result:
             fixed_result = await refine_prompt(llm,description)
             result = fixed_result
-            #answer =  db_chain.run(priming_text + " Goal:" + fixed_result)
-            #result = await execute_cleaned_query("parksDatabase.db",answer)
-
-    
-
+            answer =  db_chain.run(description)
+            result = await execute_cleaned_query("parksDatabase.db",answer)
 
         print(result)
-        return {"result": result}
+        
+        result_list = [
+            {
+                "name": place[0],
+                "latitude": place[1],
+                "longitude": place[2],
+                "height": place[3],
+                "tags": place[4],
+                "information": place[5]
+            }
+            for place in result
+        ]
+        return result_list
   except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.exception_handler(Exception)
 async def universal_exception_handler(request: Request, exc: Exception):
-    # This will print the full traceback to the console
-    traceback_str = ''.join(traceback.format_exception(etype=type(exc), value=exc, tb=exc.__traceback__))
+    traceback_str = ''.join(traceback.format_exception(type(exc), exc, exc.__traceback__))
     print(traceback_str)
-
-    # You can also decide to send the traceback as part of the response
-    # but be careful with this in a production environment to avoid leaking sensitive information
     return JSONResponse(
         status_code=500,
         content={
@@ -111,11 +136,10 @@ async def universal_exception_handler(request: Request, exc: Exception):
         },
     )
 
-
 if __name__ == "__main__":
     import uvicorn
     app.add_event_handler("startup", set_api_key)
-    uvicorn.run(app, host="0.0.0.0", port=8003)
+    uvicorn.run(app, host="0.0.0.0", port=8005)
 
     
 
